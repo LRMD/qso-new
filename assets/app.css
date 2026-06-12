@@ -24,6 +24,10 @@ body {
 }
 button { font: inherit; color: inherit; cursor: pointer; }
 a { color: var(--accent); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid #ffd43b;
+  outline-offset: 2px;
+}
 
 /* ---- layout ---- */
 .layout { display: grid; grid-template-rows: auto 1fr; height: 100%; }
