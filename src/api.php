@@ -402,3 +402,86 @@ function api_meta_last_update(mysqli $db): array
 {
     return ['last_update' => data_version($db)];
 }
+
+// --- 3.7  /api/nearest?lat=&lng=  (nearest LHFA + LYFF object to a point) -
+
+/** Great-circle distance in km. */
+function haversine_km(float $lat1, float $lng1, float $lat2, float $lng2): float
+{
+    $r = 6371.0;
+    $dLat = deg2rad($lat2 - $lat1);
+    $dLng = deg2rad($lng2 - $lng1);
+    $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+    return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
+/** Bounding-box centre [lng, lat] of any GeoJSON geometry, or null. */
+function geometry_centroid(array $geom): ?array
+{
+    if (!isset($geom['coordinates'])) {
+        return null;
+    }
+    $minX = INF; $minY = INF; $maxX = -INF; $maxY = -INF;
+    $stack = [$geom['coordinates']];
+    while ($stack) {
+        $c = array_pop($stack);
+        if (isset($c[0], $c[1]) && is_numeric($c[0]) && is_numeric($c[1])) {
+            $minX = min($minX, $c[0]); $maxX = max($maxX, $c[0]);
+            $minY = min($minY, $c[1]); $maxY = max($maxY, $c[1]);
+        } elseif (is_array($c)) {
+            foreach ($c as $cc) {
+                $stack[] = $cc;
+            }
+        }
+    }
+    return $minX === INF ? null : [($minX + $maxX) / 2, ($minY + $maxY) / 2];
+}
+
+function api_nearest(mysqli $db, string $dataDir, float $lat, float $lng): array
+{
+    $out = ['lat' => $lat, 'lng' => $lng, 'lhfa' => null, 'lyff' => null];
+
+    // Nearest LHFA — planar approximation (longitude scaled by cos lat) for ordering.
+    $sql = "SELECT state, nr, name, coordsN, coordsE,
+                   (POW(coordsN - ?, 2) + POW((coordsE - ?) * COS(RADIANS(?)), 2)) AS d2
+            FROM lhfa ORDER BY d2 ASC LIMIT 1";
+    if ($stmt = mysqli_prepare($db, $sql)) {
+        mysqli_stmt_bind_param($stmt, 'ddd', $lat, $lng, $lat);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        if ($res && ($r = mysqli_fetch_assoc($res))) {
+            $out['lhfa'] = [
+                'code' => lhfa_code((string) $r['state'], (int) $r['nr']),
+                'name' => $r['name'],
+                'km'   => round(haversine_km($lat, $lng, (float) $r['coordsN'], (float) $r['coordsE']), 1),
+            ];
+        }
+    }
+
+    // Nearest LYFF — from the fetched geojson (bbox centroids).
+    $fc = json_decode((string) @file_get_contents($dataDir . '/lyff.geojson'), true);
+    $features = is_array($fc) && isset($fc['features']) && is_array($fc['features']) ? $fc['features'] : [];
+    $bestD = INF; $best = null;
+    foreach ($features as $f) {
+        $c = isset($f['geometry']) && is_array($f['geometry']) ? geometry_centroid($f['geometry']) : null;
+        if ($c === null) {
+            continue;
+        }
+        $dx = ($c[0] - $lng) * cos(deg2rad($lat));
+        $dy = $c[1] - $lat;
+        $d  = $dx * $dx + $dy * $dy;
+        if ($d < $bestD) {
+            $bestD = $d;
+            $best  = ['p' => $f['properties'] ?? [], 'c' => $c];
+        }
+    }
+    if ($best !== null) {
+        $out['lyff'] = [
+            'code' => $best['p']['code'] ?? null,
+            'name' => $best['p']['name'] ?? null,
+            'km'   => round(haversine_km($lat, $lng, $best['c'][1], $best['c'][0]), 1),
+        ];
+    }
+
+    return $out;
+}

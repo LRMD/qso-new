@@ -107,6 +107,14 @@ a { color: var(--accent); }
 .pielegend span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pielegend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
+/* the recent/search panel slot; the geo modal overlays it exactly */
+.panel { position: relative; flex: 1; min-height: 120px; display: flex; flex-direction: column; }
+/* geolocation "my location" card — an exact overlay copy of the recent panel (closeable) */
+.geo-card { position: absolute; inset: 0; z-index: 30; margin: 0; }
+.geo-card .body { display: flex; flex-direction: column; gap: 5px; }
+.geo-card .kv { align-items: baseline; }
+.geo-card .kv > span:last-child { text-align: right; }
+
 /* recent + lists */
 .list { display: flex; flex-direction: column; }
 .item {

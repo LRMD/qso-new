@@ -17,7 +17,7 @@ require __DIR__ . '/src/view.php';
 
 // Bump on every deploy that changes API/geometry output — it is part of the cache
 // key, so old cached responses are invalidated even if no new QSO has arrived.
-const APP_BUILD = 'p8.5-mobile-12';
+const APP_BUILD = 'geo-locate-15';
 
 // Built-in server (php -S): serve real static files directly (Apache does this
 // via .htaccess in production). No-op under php-fpm/mod_php.
@@ -45,6 +45,17 @@ if ($segments[0] === 'api') {
                 static fn() => json_encode_api(api_meta_last_update($db))));
         }
         fail(404, 'Unknown resource');
+    }
+
+    // /api/nearest?lat=&lng=  (nearest LHFA + LYFF object)
+    if (($segments[1] ?? null) === 'nearest') {
+        if (!isset($_GET['lat'], $_GET['lng'])) {
+            fail(400, 'Missing lat/lng');
+        }
+        $lat = (float) $_GET['lat'];
+        $lng = (float) $_GET['lng'];
+        send_json(cached($cached, 'nearest?' . round($lat, 3) . ',' . round($lng, 3), $version,
+            static fn() => json_encode_api(api_nearest($db, $dataDir, $lat, $lng))));
     }
 
     // /api/{mode}/{resource}[/{arg}]

@@ -56,7 +56,9 @@
       first: 'Pirmas', last: 'Paskut.', nActivated: 'aktyvuota objektų', noResults: 'Nieko nerasta',
       lastUpdate: 'Atnaujinta', loading: 'Kraunama…', never: 'neaktyvuota', activated: 'aktyvuota',
       recentLeg: 'neseniai', total: 'iš viso', activations: 'aktyvavimai',
-      recency: 'Paskutinis aktyvavimas', yr: 'm.'
+      recency: 'Paskutinis aktyvavimas', yr: 'm.',
+      myLocation: 'Mano vieta', locator: 'Lokatorius',
+      nearestHillfort: 'Artimiausias piliakalnis', nearestPark: 'Artimiausias parkas'
     },
     en: {
       title: 'Amateur radio programmes', squares: 'squares', hillforts: 'hillforts',
@@ -68,7 +70,9 @@
       first: 'First', last: 'Last', nActivated: 'objects activated', noResults: 'Nothing found',
       lastUpdate: 'Updated', loading: 'Loading…', never: 'not activated', activated: 'activated',
       recentLeg: 'recent', total: 'total', activations: 'activations',
-      recency: 'Last activation', yr: 'y'
+      recency: 'Last activation', yr: 'y',
+      myLocation: 'My location', locator: 'Locator',
+      nearestHillfort: 'Nearest hillfort', nearestPark: 'Nearest park'
     }
   };
 
@@ -117,6 +121,24 @@
     return out;
   }
 
+  // Maidenhead 6-char locator from lat/lng (uppercase subsquare, e.g. "KO24AJ").
+  function maidenhead(lat, lng) {
+    var U = 'ABCDEFGHIJKLMNOPQRSTUVWX';
+    var lo = lng + 180, la = lat + 90;
+    return U[Math.floor(lo / 20)] + U[Math.floor(la / 10)] +
+      Math.floor((lo % 20) / 2) + Math.floor(la % 10) +
+      U[Math.floor((lo % 2) * 12)] + U[Math.floor((la % 1) * 24)];
+  }
+  // WAL locator (row letter + column), or null outside the Lithuanian grid coverage.
+  function walLocator(lat, lng) {
+    if (lat < 53.5 || lat > 56.5 || lng < 20.83 || lng > 27.3) return null;
+    var STEP = 1 / 6, LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    var ri = Math.floor((56.5 - lat) / STEP);
+    var col = Math.floor((lng - 20.83333333333) / STEP);
+    if (ri < 0 || ri >= LETTERS.length || col < 0) return null;
+    return LETTERS[ri] + (col < 10 ? '0' + col : '' + col);
+  }
+
   var App = {
     setup: function () {
       var ref = Vue.ref, reactive = Vue.reactive, computed = Vue.computed;
@@ -129,6 +151,7 @@
       var search = reactive({ input: '', result: null, active: false });
       var lastUpdate = ref('');
       var mobileStats = ref(false);             // collapsed stats strip expanded? (mobile)
+      var geo = reactive({ open: false, loading: false, maiden: '', wal: null, lhfa: null, lyff: null });
       var geojson = { features: [] };           // current mode's objects (non-reactive)
       var highlightCodes = ref([]);
       var basemap = ref(localStorage.getItem('qso_basemap') || DEFAULT_BASEMAP);
@@ -217,6 +240,18 @@
       // Real hrefs so the anchors are openable in a new tab / share-able.
       function objHref(code) { return appBase + mode.value + '/' + encodeURIComponent(code); }
       function actHref(call) { return appBase + mode.value + '?op=' + encodeURIComponent(call); }
+      function objHrefMode(m, code) { return appBase + m + '/' + encodeURIComponent(code); }
+
+      // Device geolocation → "my location" modal (Maidenhead, WAL, nearest LHFA/LYFF).
+      function onLocated(lat, lng) {
+        geo.maiden = maidenhead(lat, lng);
+        geo.wal = walLocator(lat, lng);
+        geo.lhfa = null; geo.lyff = null; geo.loading = true; geo.open = true;
+        api('nearest?lat=' + lat.toFixed(5) + '&lng=' + lng.toFixed(5)).then(function (d) {
+          geo.lhfa = d.lhfa; geo.lyff = d.lyff; geo.loading = false;
+        }).catch(function () { geo.loading = false; });
+      }
+      function gotoNearest(m, code) { if (!code) return; geo.open = false; loadMode(m, { code: code }); }
 
       function setLang(l) { lang.value = l; localStorage.setItem('qso_lang', l); document.documentElement.lang = l; }
 
@@ -309,6 +344,12 @@
         map = new maplibregl.Map({ container: 'map', style: BASEMAPS[basemap.value].style, center: LT_CENTER, zoom: LT_ZOOM, attributionControl: false });
         map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
         map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: ATTRIB }));
+        // Geolocation "locate me" button — touch devices only (mobile feature).
+        if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+          var gl = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false, showUserLocation: true });
+          map.addControl(gl, 'top-right');
+          gl.on('geolocate', function (e) { onLocated(e.coords.latitude, e.coords.longitude); });
+        }
         applyHashView();
         map.on('load', function () { initialized = true; loadMode(mode.value, { noPush: true, code: route0.code, op: route0.op }); });
         // After a basemap switch the style is replaced — re-add our overlay layers.
@@ -386,6 +427,7 @@
         setLang: setLang, doSearch: function () { doSearch(); }, clearSearch: clearSearch,
         selectObject: function (c) { selectObject(c); }, closeDetail: closeDetail, searchInMode: searchInMode,
         openActivator: openActivator, objHref: objHref, actHref: actHref,
+        geo: geo, gotoNearest: gotoNearest, objHrefMode: objHrefMode,
         moreRecent: function () { recent.limit = Math.min(50, recent.limit + 10); loadRecent(); }
       };
     },
@@ -457,6 +499,7 @@
       '        </div>',
       '        <div class="spin" v-else>{{ t("loading") }}</div>',
       '      </section>',
+      '      <div class="panel">',
       '      <section class="card scroll" style="flex:1; min-height:120px" v-if="!search.active">',
       '        <h3>{{ t("recent") }}</h3>',
       '        <div class="list">',
@@ -489,6 +532,22 @@
       '        </div>',
       '        <div class="empty" v-else>{{ t("noResults") }}</div>',
       '      </section>',
+      '      <section class="card scroll geo-card" v-if="geo.open">',
+      '        <h3>{{ t("myLocation") }}<button class="close" style="float:right" @click="geo.open=false">×</button></h3>',
+      '        <div class="body">',
+      '          <div class="kv"><span class="muted">{{ t("locator") }}</span><span class="code">{{ geo.maiden }}</span></div>',
+      '          <div class="kv" v-if="geo.wal"><span class="muted">WAL</span><span class="code">{{ geo.wal }}</span></div>',
+      '          <div class="kv"><span class="muted">{{ t("nearestHillfort") }}</span><span>',
+      '            <a v-if="geo.lhfa" class="who" :href="objHrefMode(\'lhfa\', geo.lhfa.code)" @click.prevent="gotoNearest(\'lhfa\', geo.lhfa.code)">{{ geo.lhfa.name }}</a>',
+      '            <span class="muted" v-if="geo.lhfa"> · {{ geo.lhfa.km }} km</span>',
+      '            <span class="muted" v-else>{{ geo.loading ? "…" : "—" }}</span></span></div>',
+      '          <div class="kv"><span class="muted">{{ t("nearestPark") }}</span><span>',
+      '            <a v-if="geo.lyff" class="who" :href="objHrefMode(\'lyff\', geo.lyff.code)" @click.prevent="gotoNearest(\'lyff\', geo.lyff.code)">{{ geo.lyff.name }}</a>',
+      '            <span class="muted" v-if="geo.lyff"> · {{ geo.lyff.km }} km</span>',
+      '            <span class="muted" v-else>{{ geo.loading ? "…" : "—" }}</span></span></div>',
+      '        </div>',
+      '      </section>',
+      '      </div>',
       '    </div>',
       '    <section class="card detail" v-if="selected">',
       '      <div class="body">',
