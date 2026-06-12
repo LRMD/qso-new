@@ -17,7 +17,7 @@ require __DIR__ . '/src/view.php';
 
 // Bump on every deploy that changes API/geometry output — it is part of the cache
 // key, so old cached responses are invalidated even if no new QSO has arrived.
-const APP_BUILD = 'geo-locate-15';
+const APP_BUILD = 'geo-locate-16';
 
 // Built-in server (php -S): serve real static files directly (Apache does this
 // via .htaccess in production). No-op under php-fpm/mod_php.
@@ -52,8 +52,12 @@ if ($segments[0] === 'api') {
         if (!isset($_GET['lat'], $_GET['lng'])) {
             fail(400, 'Missing lat/lng');
         }
-        $lat = (float) $_GET['lat'];
-        $lng = (float) $_GET['lng'];
+        $lat = filter_var($_GET['lat'], FILTER_VALIDATE_FLOAT);
+        $lng = filter_var($_GET['lng'], FILTER_VALIDATE_FLOAT);
+        if ($lat === false || $lng === false || !is_finite($lat) || !is_finite($lng)
+            || $lat < -90.0 || $lat > 90.0 || $lng < -180.0 || $lng > 180.0) {
+            fail(400, 'Invalid lat/lng');
+        }
         send_json(cached($cached, 'nearest?' . round($lat, 3) . ',' . round($lng, 3), $version,
             static fn() => json_encode_api(api_nearest($db, $dataDir, $lat, $lng))));
     }
@@ -91,11 +95,15 @@ if ($segments[0] === 'api') {
 
         case 'activator':
             $call = rawurldecode($segments[3] ?? '');
-            if ($call === '') {
+            $normalizedCall = normalize_call($call);
+            if ($normalizedCall === '') {
                 fail(400, 'Missing callsign');
             }
-            send_json(cached($cached, "$mode/activator/$call", $version,
-                static fn() => json_encode_api(api_activator($db, $prog, $mode, $call))));
+            if (strlen($call) > 64 || !preg_match('/^[A-Z0-9]{2,20}$/', $normalizedCall)) {
+                fail(400, 'Invalid callsign');
+            }
+            send_json(cached($cached, "$mode/activator/$normalizedCall", $version,
+                static fn() => json_encode_api(api_activator($db, $prog, $mode, $normalizedCall))));
 
         default:
             fail(404, 'Unknown resource');
