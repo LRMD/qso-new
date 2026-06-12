@@ -1,0 +1,22 @@
+RewriteEngine On
+# No RewriteBase: rules are relative to this directory, so the app can be mounted
+# under any path. The mount point is auto-derived in PHP from SCRIPT_NAME.
+
+# --- Protect config, source, tooling and cache from direct access ---
+RewriteRule ^\.env\.ini$        - [F,L]
+RewriteRule ^(src|tools|cache)/ - [F,L]
+RewriteRule \.(ini|sql)$        - [F,L]
+
+# --- Serve real static files / directories (assets) directly ---
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# --- Everything else → front controller ---
+RewriteRule ^ index.php [QSA,L]
+
+# Defense in depth: deny the config file even if mod_rewrite is unavailable.
+<Files .env.ini>
+    Order allow,deny
+    Deny from all
+</Files>
