@@ -86,13 +86,16 @@ a { color: var(--accent); }
 .list { display: flex; flex-direction: column; }
 .item {
   display: flex; flex-direction: column; gap: 2px; padding: 8px 12px;
-  border-bottom: 1px solid var(--line); cursor: pointer; background: transparent; border-left: 3px solid transparent; text-align: left;
+  border-bottom: 1px solid var(--line); background: transparent; border-left: 3px solid transparent; text-align: left;
 }
 .item:hover { background: var(--panel-2); }
 .item.active { border-left-color: var(--accent); background: var(--panel-2); }
 .item .row1 { display: flex; justify-content: space-between; gap: 8px; }
-.item .code { font-weight: 700; }
+.item .code { font-weight: 700; color: var(--text); }
 .item .who { color: var(--accent); }
+/* code + callsign are separate clickable anchors */
+a.code, a.who { text-decoration: none; cursor: pointer; }
+a.code:hover, a.who:hover { text-decoration: underline; }
 .item .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 11px; color: var(--muted); }
 

@@ -187,6 +187,12 @@
       }
       function searchInMode(m) { loadMode(m, { keepSearch: true }).then(function () { if (search.input) doSearch(); }); }
 
+      // Run the activator search for a callsign (deep-links ?op=CALLSIGN).
+      function openActivator(call) { selected.value = null; search.input = call; doSearch(); }
+      // Real hrefs so the anchors are openable in a new tab / share-able.
+      function objHref(code) { return appBase + mode.value + '/' + encodeURIComponent(code); }
+      function actHref(call) { return appBase + mode.value + '?op=' + encodeURIComponent(call); }
+
       function setLang(l) { lang.value = l; localStorage.setItem('qso_lang', l); document.documentElement.lang = l; }
 
       // ---- map ----------------------------------------------------------
@@ -327,6 +333,7 @@
         switchMode: function (m) { if (m !== mode.value) loadMode(m); },
         setLang: setLang, doSearch: function () { doSearch(); }, clearSearch: clearSearch,
         selectObject: function (c) { selectObject(c); }, closeDetail: closeDetail, searchInMode: searchInMode,
+        openActivator: openActivator, objHref: objHref, actHref: actHref,
         moreRecent: function () { recent.limit = Math.min(50, recent.limit + 10); loadRecent(); }
       };
     },
@@ -383,10 +390,13 @@
       '      <section class="card scroll" style="flex:1; min-height:120px" v-if="!search.active">',
       '        <h3>{{ t("recent") }}</h3>',
       '        <div class="list">',
-      '          <button class="item" v-for="(a,i) in recent.items" :key="i" @click="selectObject(a.code)">',
-      '            <div class="row1"><span class="code">{{ a.code }}</span><span class="who">{{ a.activator }}</span></div>',
+      '          <div class="item" v-for="(a,i) in recent.items" :key="i">',
+      '            <div class="row1">',
+      '              <a class="code" :href="objHref(a.code)" @click.prevent="selectObject(a.code)">{{ a.code }}</a>',
+      '              <a class="who" :href="actHref(a.activator)" @click.prevent="openActivator(a.activator)">{{ a.activator }}</a>',
+      '            </div>',
       '            <div class="meta"><span>{{ a.date }}</span><span class="chip">{{ a.qsos }} QSO</span><span v-for="b in a.bands" :key="b" class="chip">{{ b }}</span></div>',
-      '          </button>',
+      '          </div>',
       '          <div class="empty" v-if="!recent.items.length && !recent.loading">{{ t("noResults") }}</div>',
       '          <div class="spin" v-if="recent.loading">{{ t("loading") }}</div>',
       '        </div>',
@@ -422,7 +432,7 @@
       '          <thead><tr><th>{{ t("activatedBy") }}</th><th>{{ t("date") }}</th><th>QSO</th><th>{{ t("bands") }}</th></tr></thead>',
       '          <tbody>',
       '            <tr v-for="(a,i) in selected.activations" :key="i">',
-      '              <td>{{ a.activator }}</td><td>{{ a.date }}</td><td>{{ a.qsos }}</td><td>{{ a.bands.join(", ") }}</td>',
+      '              <td><a class="who" :href="actHref(a.activator)" @click.prevent="openActivator(a.activator)">{{ a.activator }}</a></td><td>{{ a.date }}</td><td>{{ a.qsos }}</td><td>{{ a.bands.join(", ") }}</td>',
       '            </tr>',
       '          </tbody>',
       '        </table>',
