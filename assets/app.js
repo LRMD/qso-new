@@ -100,7 +100,7 @@
       var mode = ref(DEFAULT_MODE);
       var lang = ref(localStorage.getItem('qso_lang') || document.documentElement.lang || 'lt');
       var stats = ref(null);
-      var recent = reactive({ items: [], window: null, limit: 50, loading: false });
+      var recent = reactive({ items: [], limit: 10, loading: false });
       var selected = ref(null);
       var search = reactive({ input: '', result: null, active: false });
       var lastUpdate = ref('');
@@ -135,7 +135,7 @@
       function loadRecent() {
         recent.loading = true;
         api(mode.value + '/recent?limit=' + recent.limit).then(function (d) {
-          recent.items = d.activations || []; recent.window = d.window_days; recent.loading = false;
+          recent.items = d.activations || []; recent.loading = false;
         }).catch(function () { recent.items = []; recent.loading = false; });
       }
       function loadObjects() {
@@ -327,7 +327,7 @@
         switchMode: function (m) { if (m !== mode.value) loadMode(m); },
         setLang: setLang, doSearch: function () { doSearch(); }, clearSearch: clearSearch,
         selectObject: function (c) { selectObject(c); }, closeDetail: closeDetail, searchInMode: searchInMode,
-        moreRecent: function () { recent.limit += 50; loadRecent(); }
+        moreRecent: function () { recent.limit = Math.min(50, recent.limit + 10); loadRecent(); }
       };
     },
     template: [
@@ -381,7 +381,7 @@
       '        <div class="spin" v-else>{{ t("loading") }}</div>',
       '      </section>',
       '      <section class="card scroll" style="flex:1; min-height:120px" v-if="!search.active">',
-      '        <h3>{{ t("recent") }}<span class="muted" v-if="recent.window"> · {{ recent.window }}d</span></h3>',
+      '        <h3>{{ t("recent") }}</h3>',
       '        <div class="list">',
       '          <button class="item" v-for="(a,i) in recent.items" :key="i" @click="selectObject(a.code)">',
       '            <div class="row1"><span class="code">{{ a.code }}</span><span class="who">{{ a.activator }}</span></div>',

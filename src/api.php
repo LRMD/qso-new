@@ -151,57 +151,51 @@ function api_objects(mysqli $db, array $prog, string $mode, string $dataDir): ar
     return feature_collection($features);
 }
 
-// --- 3.2  /api/{mode}/recent (escalating 30 → 90 → 270 days) --------------
+// --- 3.2  /api/{mode}/recent (last N unique activator callsigns) ----------
 
-function recent_query(mysqli $db, string $c1, string $c2, string $threshold, ?string $before, int $limit): array
+function api_recent(mysqli $db, array $prog, string $mode, array $q): array
 {
-    $sql = "SELECT caller_simple AS activator, `$c1` AS k1, `$c2` AS k2, DATE(datetime) AS day,
-                   COUNT(*) AS qsos,
+    $c1    = $prog['c1'];
+    $c2    = $prog['c2'];
+    $limit = isset($q['limit']) ? max(1, min(50, (int) $q['limit'])) : 10;
+
+    // All (caller, object, day) activations of the N most-recently-active callsigns,
+    // newest first; we then keep each callsign's most recent one (PHP dedupe). This
+    // keeps the query ONLY_FULL_GROUP_BY-safe and deterministic.
+    $sql = "SELECT caller_simple AS activator, `$c1` AS k1, `$c2` AS k2,
+                   DATE(datetime) AS day, COUNT(*) AS qsos,
                    GROUP_CONCAT(DISTINCT band ORDER BY band) AS bands,
                    GROUP_CONCAT(DISTINCT mode ORDER BY mode) AS modes,
                    MAX(datetime) AS last_qso
             FROM qso
-            WHERE `$c1` <> '' AND datetime >= ?" . ($before !== null ? ' AND datetime < ?' : '') . "
+            WHERE `$c1` <> '' AND caller_simple IN (
+                SELECT caller_simple FROM (
+                    SELECT caller_simple, MAX(datetime) AS mx
+                    FROM qso WHERE `$c1` <> ''
+                    GROUP BY caller_simple
+                    ORDER BY mx DESC
+                    LIMIT ?
+                ) z )
             GROUP BY caller_simple, `$c1`, `$c2`, DATE(datetime)
-            ORDER BY last_qso DESC
-            LIMIT ?";
-
-    $stmt = mysqli_prepare($db, $sql);
-    if (!$stmt) {
-        return [];
-    }
-    if ($before !== null) {
-        mysqli_stmt_bind_param($stmt, 'ssi', $threshold, $before, $limit);
-    } else {
-        mysqli_stmt_bind_param($stmt, 'si', $threshold, $limit);
-    }
-    mysqli_stmt_execute($stmt);
-    $res = mysqli_stmt_get_result($stmt);
+            ORDER BY last_qso DESC";
 
     $rows = [];
-    while ($res && ($row = mysqli_fetch_assoc($res))) {
-        $rows[] = $row;
-    }
-    return $rows;
-}
-
-function api_recent(mysqli $db, array $prog, string $mode, array $q): array
-{
-    $limit  = isset($q['limit']) ? max(1, min(200, (int) $q['limit'])) : 50;
-    $before = (isset($q['before']) && $q['before'] !== '') ? (string) $q['before'] : null;
-
-    $rows     = [];
-    $usedDays = null;
-    foreach ([90, 270, 900] as $days) {       // escalating window (new.md §4.2)
-        $usedDays = $days;
-        $rows     = recent_query($db, $prog['c1'], $prog['c2'], recent_threshold($days), $before, $limit);
-        if ($rows) {
-            break;
+    if ($stmt = mysqli_prepare($db, $sql)) {
+        mysqli_stmt_bind_param($stmt, 'i', $limit);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $rows[] = $row;
         }
     }
 
-    $out = [];
+    $seen = [];
+    $out  = [];
     foreach ($rows as $r) {
+        if (isset($seen[$r['activator']])) {
+            continue;                       // keep only each callsign's most recent activation
+        }
+        $seen[$r['activator']] = true;
         $out[] = [
             'code'      => format_code($mode, (string) $r['k1'], (int) $r['k2']),
             'activator' => $r['activator'],
@@ -215,7 +209,6 @@ function api_recent(mysqli $db, array $prog, string $mode, array $q): array
 
     return [
         'mode'        => $mode,
-        'window_days' => $usedDays,
         'limit'       => $limit,
         'count'       => count($out),
         'activations' => $out,
