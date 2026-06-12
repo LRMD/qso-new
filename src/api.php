@@ -247,6 +247,24 @@ function api_stats(mysqli $db, array $prog, string $mode): array
          FROM qso WHERE `$c1` <> ''"
     )) ?: [];
 
+    // QSO counts per band, emitted in canonical band order (HF → VHF → UHF → SHF).
+    $bandCount = [];
+    if ($res = mysqli_query($db, "SELECT band, COUNT(*) AS n FROM qso WHERE `$c1` <> '' AND band <> '' GROUP BY band")) {
+        while ($r = mysqli_fetch_assoc($res)) {
+            $bandCount[$r['band']] = (int) $r['n'];
+        }
+    }
+    $byBand = [];
+    foreach (['160m','80m','60m','40m','30m','20m','17m','15m','12m','10m','6m','4m','2m','70cm','23cm','13cm','9cm','6cm','3cm'] as $b) {
+        if (isset($bandCount[$b])) {
+            $byBand[] = ['band' => $b, 'qsos' => $bandCount[$b]];
+            unset($bandCount[$b]);
+        }
+    }
+    foreach ($bandCount as $b => $n) {           // any non-canonical bands, appended as-is
+        $byBand[] = ['band' => $b, 'qsos' => $n];
+    }
+
     $objActivated = (int) ($row['objects_activated'] ?? 0);
 
     return [
@@ -265,6 +283,7 @@ function api_stats(mysqli $db, array $prog, string $mode): array
             'cw'    => (int) ($byMode['cw'] ?? 0),
             'digi'  => (int) ($byMode['digi'] ?? 0),
         ],
+        'by_band'           => $byBand,
         'last_update'       => data_version($db),
     ];
 }

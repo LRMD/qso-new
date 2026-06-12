@@ -49,9 +49,9 @@
     lt: {
       title: 'Programos:', squares: 'skverai', hillforts: 'piliakalniai',
       parks: 'parkai, rezervatai', searchPh: 'Ieškoti aktyvatoriaus šaukinio…', search: 'Ieškoti',
-      stats: 'Statistika', activators: 'aktyvatoriai', objects: 'objektai', coverage: 'aprėptis',
+      stats: 'Statistika', activators: 'aktyvatoriai', objects: 'objektai', coverage: 'Aktyvuota objektų',
       qsos: 'ryšiai (QSO)', hunters: 'medžiotojai', recent: 'Naujausi aktyvavimai', loadMore: 'Daugiau',
-      breakdown: 'Pagal modą / diapazoną', byMode: 'Modos', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
+      breakdown: 'Pagal modą / diapazoną', byMode: 'Modos', byBand: 'Diapazonai', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
       object: 'Objektas', activatedBy: 'Aktyvavo', date: 'Data', bands: 'Diapaz.', modes: 'Modos',
       first: 'Pirmas', last: 'Paskut.', nActivated: 'aktyvuota objektų', noResults: 'Nieko nerasta',
       lastUpdate: 'Atnaujinta', loading: 'Kraunama…', never: 'neaktyvuota', activated: 'aktyvuota',
@@ -61,9 +61,9 @@
     en: {
       title: 'Amateur radio programmes', squares: 'squares', hillforts: 'hillforts',
       parks: 'parks, reserves', searchPh: 'Search activator callsign…', search: 'Search',
-      stats: 'Statistics', activators: 'activators', objects: 'objects', coverage: 'coverage',
+      stats: 'Statistics', activators: 'activators', objects: 'objects', coverage: 'Objects activated:',
       qsos: 'QSOs', hunters: 'hunters', recent: 'Recent activations', loadMore: 'Load more',
-      breakdown: 'By mode / band', byMode: 'Modes', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
+      breakdown: 'By mode / band', byMode: 'Modes', byBand: 'Bands', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
       object: 'Object', activatedBy: 'Activated by', date: 'Date', bands: 'Bands', modes: 'Modes',
       first: 'First', last: 'Last', nActivated: 'objects activated', noResults: 'Nothing found',
       lastUpdate: 'Updated', loading: 'Loading…', never: 'not activated', activated: 'activated',
@@ -91,6 +91,30 @@
       } else { c.forEach(walk); }
     })(geom.coordinates);
     return b;
+  }
+
+  var MODE_COLORS = { phone: '#4dabf7', cw: '#f59f00', digi: '#51cf66' };
+  // Categorical palette for band slices (assigned by index).
+  var PALETTE = ['#4dabf7', '#f59f00', '#51cf66', '#e8590c', '#9775fa', '#20c997',
+    '#f06595', '#fab005', '#15aabf', '#7048e8', '#ff8787', '#82c91e', '#e64980',
+    '#5c7cfa', '#fcc419', '#63e6be', '#a9e34b', '#ffa94d', '#748ffc'];
+  // Pure-JS pie slices (32×32 viewBox, r=15). Returns [{d, color}]; empty if no data.
+  function piePaths(parts) {
+    var nz = parts.filter(function (p) { return p.value > 0; });
+    var total = nz.reduce(function (s, p) { return s + p.value; }, 0);
+    if (total <= 0) return [];
+    if (nz.length === 1) {                                  // 100% — a single arc is degenerate
+      return [{ d: 'M16,1 A15,15 0 1 0 16,31 A15,15 0 1 0 16,1 Z', color: nz[0].color }];
+    }
+    var a = -Math.PI / 2, out = [];
+    nz.forEach(function (p) {
+      var frac = p.value / total, a2 = a + frac * 2 * Math.PI, large = frac > 0.5 ? 1 : 0;
+      out.push({ d: 'M16,16 L' + (16 + 15 * Math.cos(a)) + ',' + (16 + 15 * Math.sin(a)) +
+        ' A15,15 0 ' + large + ' 1 ' + (16 + 15 * Math.cos(a2)) + ',' + (16 + 15 * Math.sin(a2)) + ' Z',
+        color: p.color });
+      a = a2;
+    });
+    return out;
   }
 
   var App = {
@@ -325,10 +349,35 @@
       // ---- computed for template ---------------------------------------
       var coveragePct = computed(function () { return stats.value && stats.value.coverage != null ? Math.round(stats.value.coverage * 100) : null; });
 
+      // --- stats charts (tabbed pies: by band / by mode) ---
+      var statTab = ref('band');
+      var modeParts = computed(function () {
+        var bm = (stats.value && stats.value.by_mode) || { phone: 0, cw: 0, digi: 0 };
+        return [
+          { key: 'phone', label: t('phone'), value: bm.phone || 0, color: MODE_COLORS.phone },
+          { key: 'cw',    label: t('cw'),    value: bm.cw    || 0, color: MODE_COLORS.cw },
+          { key: 'digi',  label: t('digi'),  value: bm.digi  || 0, color: MODE_COLORS.digi }
+        ];
+      });
+      var bandParts = computed(function () {
+        return ((stats.value && stats.value.by_band) || []).map(function (b, i) {
+          return { key: b.band, label: b.band, value: b.qsos || 0, color: PALETTE[i % PALETTE.length] };
+        });
+      });
+      var modeSlices = computed(function () { return piePaths(modeParts.value); });
+      var bandSlices = computed(function () { return piePaths(bandParts.value); });
+      // Band legend shows the top 3 by QSO count; the rest appear on pie hover.
+      var bandSorted = computed(function () {
+        return bandParts.value.slice().sort(function (a, b) { return b.value - a.value; });
+      });
+      var bandTop3 = computed(function () { return bandSorted.value.slice(0, 3); });
+
       return {
         MODES: MODES, mode: mode, lang: lang, t: t, modeName: function (m) { return modeName(t, m); },
         stats: stats, recent: recent, selected: selected, search: search, lastUpdate: lastUpdate,
         coveragePct: coveragePct,
+        statTab: statTab, modeParts: modeParts, modeSlices: modeSlices,
+        bandSlices: bandSlices, bandTop3: bandTop3, bandSorted: bandSorted,
         BASEMAPS: BASEMAPS, basemap: basemap, setBasemap: setBasemap,
         switchMode: function (m) { if (m !== mode.value) loadMode(m); },
         setLang: setLang, doSearch: function () { doSearch(); }, clearSearch: clearSearch,
@@ -373,12 +422,25 @@
       '            <div class="kv"><span class="muted">{{ t("coverage") }}</span><span>{{ coveragePct }}%</span></div>',
       '            <div class="coverage-bar"><i :style="{width: coveragePct+\'%\'}"></i></div>',
       '          </div>',
-      '          <details class="breakdown">',
-      '            <summary>{{ t("breakdown") }}</summary>',
-      '            <div class="kv"><span>{{ t("phone") }}</span><span>{{ stats.by_mode.phone }}</span></div>',
-      '            <div class="kv"><span>{{ t("cw") }}</span><span>{{ stats.by_mode.cw }}</span></div>',
-      '            <div class="kv"><span>{{ t("digi") }}</span><span>{{ stats.by_mode.digi }}</span></div>',
-      '          </details>',
+      '          <div class="charts">',
+      '            <div class="tabs">',
+      '              <button :class="{active: statTab===\'band\'}" @click="statTab=\'band\'">{{ t("byBand") }}</button>',
+      '              <button :class="{active: statTab===\'mode\'}" @click="statTab=\'mode\'">{{ t("byMode") }}</button>',
+      '            </div>',
+      '            <div v-show="statTab===\'band\'" class="chart">',
+      '              <div v-if="bandSlices.length" class="pie-wrap">',
+      '                <svg viewBox="0 0 32 32" class="pie"><path v-for="s in bandSlices" :key="s.color" :d="s.d" :fill="s.color"/></svg>',
+      '                <div class="pie-pop"><span v-for="p in bandSorted" :key="p.key"><i class="sw" :style="{background:p.color}"></i>{{ p.label }} · {{ p.value }}</span></div>',
+      '              </div>',
+      '              <div v-else class="empty">{{ t("noResults") }}</div>',
+      '              <div class="pielegend"><span v-for="p in bandTop3" :key="p.key"><i class="sw" :style="{background:p.color}"></i>{{ p.label }} · {{ p.value }}</span></div>',
+      '            </div>',
+      '            <div v-show="statTab===\'mode\'" class="chart">',
+      '              <svg v-if="modeSlices.length" viewBox="0 0 32 32" class="pie"><path v-for="s in modeSlices" :key="s.color" :d="s.d" :fill="s.color"/></svg>',
+      '              <div v-else class="empty">{{ t("noResults") }}</div>',
+      '              <div class="pielegend"><span v-for="p in modeParts" :key="p.key"><i class="sw" :style="{background:p.color}"></i>{{ p.label }} · {{ p.value }}</span></div>',
+      '            </div>',
+      '          </div>',
       '          <div class="recency-leg">',
       '            <div class="muted" style="font-size:11px">{{ t("recency") }}</div>',
       '            <div class="ragbar"></div>',
