@@ -17,7 +17,7 @@ require __DIR__ . '/src/view.php';
 
 // Bump on every deploy that changes API/geometry output — it is part of the cache
 // key, so old cached responses are invalidated even if no new QSO has arrived.
-const APP_BUILD = 'p8.3-bandlegend-9';
+const APP_BUILD = 'p8.5-mobile-12';
 
 // Built-in server (php -S): serve real static files directly (Apache does this
 // via .htaccess in production). No-op under php-fpm/mod_php.

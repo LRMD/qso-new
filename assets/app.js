@@ -128,6 +128,7 @@
       var selected = ref(null);
       var search = reactive({ input: '', result: null, active: false });
       var lastUpdate = ref('');
+      var mobileStats = ref(false);             // collapsed stats strip expanded? (mobile)
       var geojson = { features: [] };           // current mode's objects (non-reactive)
       var highlightCodes = ref([]);
       var basemap = ref(localStorage.getItem('qso_basemap') || DEFAULT_BASEMAP);
@@ -343,6 +344,8 @@
           else if (r.code && (!selected.value || selected.value.code !== r.code)) selectObject(r.code, { noPush: true, fit: true });
           else if (!r.code && selected.value) { selected.value = null; updateHighlight(); }
         });
+        // Map box changes when the device rotates / the layout reflows — refit it.
+        window.addEventListener('orientationchange', function () { setTimeout(function () { if (map) map.resize(); }, 300); });
       });
       loadLastUpdate();
 
@@ -375,7 +378,7 @@
       return {
         MODES: MODES, mode: mode, lang: lang, t: t, modeName: function (m) { return modeName(t, m); },
         stats: stats, recent: recent, selected: selected, search: search, lastUpdate: lastUpdate,
-        coveragePct: coveragePct,
+        coveragePct: coveragePct, mobileStats: mobileStats,
         statTab: statTab, modeParts: modeParts, modeSlices: modeSlices,
         bandSlices: bandSlices, bandTop3: bandTop3, bandSorted: bandSorted,
         BASEMAPS: BASEMAPS, basemap: basemap, setBasemap: setBasemap,
@@ -409,8 +412,13 @@
       '  <div class="stage">',
       '    <div id="map"></div>',
       '    <div class="rail">',
-      '      <section class="card">',
-      '        <h3>{{ t("stats") }} — {{ mode.toUpperCase() }} {{ modeName(mode) }}</h3>',
+      '      <section class="card stats" :class="{open: mobileStats}">',
+      '        <button class="stats-strip" v-if="stats" @click="mobileStats=!mobileStats">',
+      '          <span><b>{{ stats.activators }}</b> {{ t("activators") }}</span>',
+      '          <span><b>{{ stats.objects_activated }}</b>/{{ stats.objects_total }} {{ t("objects") }}</span>',
+      '          <span class="chev">{{ mobileStats ? "▴" : "▾" }}</span>',
+      '        </button>',
+      '        <h3 class="stats-h3">{{ t("stats") }} — {{ mode.toUpperCase() }} {{ modeName(mode) }}</h3>',
       '        <div class="body" v-if="stats">',
       '          <div class="stats-grid">',
       '            <div class="stat"><div class="n">{{ stats.activators }}</div><div class="l">{{ t("activators") }}</div></div>',
