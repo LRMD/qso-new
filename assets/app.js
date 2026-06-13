@@ -15,6 +15,7 @@
   function rasterStyle(tiles, attribution, maxzoom) {
     return {
       version: 8,
+      glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
       sources: { base: { type: 'raster', tiles: tiles, tileSize: 256, attribution: attribution, maxzoom: maxzoom || 19 } },
       layers: [{ id: 'base', type: 'raster', source: 'base' }]
     };
@@ -364,7 +365,7 @@
       function setLang(l) { lang.value = l; localStorage.setItem('qso_lang', l); document.documentElement.lang = l; }
 
       // ---- map ----------------------------------------------------------
-      var APP_LAYERS = ['obj-fill', 'obj-line', 'obj-pt', 'obj-hl'];
+      var APP_LAYERS = ['obj-fill', 'obj-line', 'obj-pt', 'obj-hl', 'obj-label'];
       function removeApp() {
         if (!map) return;
         APP_LAYERS.forEach(function (id) { if (map.getLayer(id)) map.removeLayer(id); });
@@ -402,6 +403,23 @@
           map.addLayer({ id: 'obj-hl', type: 'line', source: 'obj',
             filter: ['in', ['get', 'code'], ['literal', []]],
             paint: { 'line-color': '#ffd43b', 'line-width': 3 } });
+          if (mode.value === 'wal') {
+            map.addLayer({ id: 'obj-label', type: 'symbol', source: 'obj',
+              minzoom: 6,
+              layout: {
+                'text-field': ['get', 'code'],
+                'text-font': ['Noto Sans Bold'],
+                'text-size': ['interpolate', ['linear'], ['zoom'], 6, 9, 10, 16, 14, 28],
+                'text-rotation-alignment': 'map',
+                'text-pitch-alignment': 'map',
+                'text-allow-overlap': true,
+                'text-ignore-placement': true
+              },
+              paint: {
+                'text-color': 'rgba(92,92,92,0.40)'
+              }
+            });
+          }
         }
         updateHighlight();
       }
