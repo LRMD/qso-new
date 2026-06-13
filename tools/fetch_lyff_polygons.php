@@ -1,35 +1,42 @@
 <?php
-// tools/fetch_lyff_polygons.php (PHP 7.4, CLI only) — OSM polygon fetch for LYFF.
+// tools/fetch_lyff_polygons.php (PHP 7.4, CLI only) — CDDA polygon fetch for LYFF.
 //
-// Queries OpenStreetMap Nominatim by LYFF name and writes a static GeoJSON
-// FeatureCollection (new/data/lyff.geojson) keyed by LYFF-<nr>, plus a misses log
-// (new/data/lyff_misses.txt). Run once, offline — the app never calls OSM at runtime.
+// Queries the EEA Nationally Designated Areas (NatDA/CDDA) REST API for Lithuania
+// and writes a static GeoJSON FeatureCollection (new/data/lyff.geojson) keyed by
+// LYFF-<nr>, plus a misses log (new/data/lyff_misses.txt). Run once, offline —
+// the app never calls CDDA at runtime.
 //
-// Honours the Nominatim usage policy: <=1 request/second, descriptive User-Agent,
-// results cached to disk. Output carries ODbL attribution. Resumable.
+// Data source: EEA CDDA MapServer layer 4 (large-scale polygons)
+//   https://bio.discomap.eea.europa.eu/arcgis/rest/services/ProtectedSites/CDDA_Dyna_WM/MapServer/4
+// No authentication required. Public ArcGIS REST service.
 //
 //   Usage:
 //     php tools/fetch_lyff_polygons.php [--limit=N] [--force]   # initial pass (full names)
-//     php tools/fetch_lyff_polygons.php --retry-misses          # retry ONLY misses, simplified
+//     php tools/fetch_lyff_polygons.php --retry-misses          # retry ONLY misses
 //
 //     --limit=N        fetch at most N new objects (smoke testing)
 //     --force          ignore existing output and refetch everything
-//     --retry-misses   re-query the objects currently in lyff_misses.txt using a
-//                      simplified name (drop "(...)" notes and descriptor words such
-//                      as kraštovaizdžio / hidrografinis / telmologinis / pedologinis
-//                      / pralaužos / senslėnio …), keeping found hits.
+//     --retry-misses   re-query the objects currently in lyff_misses.txt using
+//                      a simplified name (drop descriptor words such as
+//                      kraštovaizdžio / hidrografinis / telmologinis / pedologinis
+//                      / pralaužos / senslėnio …) and, if still not found, a broad
+//                      LIKE search. Keeps all previously found hits.
 
 declare(strict_types=1);
+
+// The full LT polygon dataset (480 features, large geometries) can exhaust the
+// default 128 MB limit when json_encode-ing the FeatureCollection on each flush.
+ini_set('memory_limit', '512M');
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This script is CLI-only.\n");
     exit(1);
 }
 
-const NOMINATIM   = 'https://nominatim.openstreetmap.org/search';
-const USER_AGENT  = 'qso-lyff-fetch/1.0 (+https://qrz.lt; one-off map data tooling)';
-const RATE_SLEEP  = 1; // seconds between requests (Nominatim policy: max 1/s)
-const ATTRIBUTION = 'Data © OpenStreetMap contributors, ODbL 1.0 (https://osm.org/copyright)';
+// EEA CDDA MapServer — layer 4 is "large scale viewing" polygon layer for LT
+const CDDA_LAYER  = 'https://bio.discomap.eea.europa.eu/arcgis/rest/services/ProtectedSites/CDDA_Dyna_WM/MapServer/4/query';
+const USER_AGENT  = 'qso-lyff-fetch/2.0 (+https://qrz.lt; one-off map data tooling)';
+const ATTRIBUTION = 'Data © European Environment Agency (EEA), Nationally Designated Areas (NatDA/CDDA). https://www.eea.europa.eu/data-and-maps/data/nationally-designated-areas-national-cdda-18';
 
 // Descriptor / category words removed when simplifying a missed name. The proper
 // place name and the type noun (draustinis / parkas / rezervatas) are kept.
@@ -44,7 +51,7 @@ const NOISE_WORDS = [
 ];
 
 $root     = dirname(__DIR__);            // new/
-$srcFile  = $root . '/lyff.json';
+$srcFile  = $root . '/data/lyff.json';
 $outDir   = $root . '/data';
 $outFile  = $outDir . '/lyff.geojson';
 $missFile = $outDir . '/lyff_misses.txt';
@@ -88,7 +95,7 @@ if (!is_dir($outDir) && !mkdir($outDir, 0775, true) && !is_dir($outDir)) {
 $ctx = stream_context_create(['http' => [
     'method'        => 'GET',
     'header'        => 'User-Agent: ' . USER_AGENT . "\r\n",
-    'timeout'       => 30,
+    'timeout'       => 20,
     'ignore_errors' => true,
 ]]);
 
@@ -98,51 +105,80 @@ function lyff_code_of(int $nr): string
     return 'LYFF-' . str_pad((string) $nr, 4, '0', STR_PAD_LEFT);
 }
 
-/** Query Nominatim for a polygon; returns the hit (with geojson) or null. */
-function nominatim_polygon(string $query, $ctx): ?array
+/**
+ * Query EEA CDDA REST API (layer 4, large-scale polygons) for a protected area
+ * in Lithuania. Returns the first matching GeoJSON feature array, or null.
+ *
+ * Strategy:
+ *   $useLike = false  →  exact siteName match  (fast, unambiguous)
+ *   $useLike = true   →  UPPER(siteName) LIKE UPPER('%<name>%')  (fuzzy fallback;
+ *                         returns null if 0 or >1 results to avoid false positives)
+ */
+function cdda_polygon(string $name, $ctx, bool $useLike = false): ?array
 {
-    $url = NOMINATIM . '?' . http_build_query([
-        'format'          => 'jsonv2',
-        'polygon_geojson' => 1,
-        'limit'           => 1,
-        'countrycodes'    => 'lt',
-        'q'               => $query,
+    // Escape single quotes for the ArcGIS SQL WHERE clause
+    $escaped = str_replace("'", "''", $name);
+
+    $where = $useLike
+        ? "cddaCountryCode='LT' AND UPPER(siteName) LIKE UPPER('%" . $escaped . "%')"
+        : "cddaCountryCode='LT' AND siteName='" . $escaped . "'";
+
+    $url = CDDA_LAYER . '?' . http_build_query([
+        'where'             => $where,
+        'outFields'         => 'siteName,cddaId,nationalId,legalFoundationDate',
+        'f'                 => 'geojson',
+        'returnGeometry'    => 'true',
+        'outSR'             => '4326',
+        'resultRecordCount' => $useLike ? 2 : 1,  // 2 when fuzzy so we can detect ambiguity
     ]);
+
     $res = @file_get_contents($url, false, $ctx);
     if ($res === false) {
         return null;
     }
-    $data = json_decode($res, true);
-    $hit  = (is_array($data) && isset($data[0])) ? $data[0] : null;
-    return ($hit !== null && isset($hit['geojson'])) ? $hit : null;
+
+    $data     = json_decode($res, true);
+    $features = $data['features'] ?? [];
+
+    // Reject ambiguous LIKE results (0 or more than 1 match)
+    if ($useLike && count($features) !== 1) {
+        return null;
+    }
+
+    $feat = $features[0] ?? null;
+    return ($feat !== null && !empty($feat['geometry'])) ? $feat : null;
 }
 
-/** Build a GeoJSON Feature from a Nominatim hit. */
-function build_feature(string $code, int $nr, string $name, array $hit, array $extra = []): array
+/**
+ * Build a GeoJSON Feature from a CDDA GeoJSON feature element.
+ */
+function build_feature(string $code, int $nr, string $name, array $cddaFeat, array $extra = []): array
 {
     return [
         'type'       => 'Feature',
         'properties' => array_merge([
-            'code'     => $code,
-            'name'     => $name,
-            'nr'       => $nr,
-            'osm_type' => $hit['osm_type'] ?? null,
-            'osm_id'   => $hit['osm_id'] ?? null,
+            'code'        => $code,
+            'name'        => $name,
+            'nr'          => $nr,
+            'cdda_id'     => $cddaFeat['properties']['cddaId'] ?? null,
+            'national_id' => $cddaFeat['properties']['nationalId'] ?? null,
+            'founded'     => $cddaFeat['properties']['legalFoundationDate'] ?? null,
+            'source'      => 'cdda',
         ], $extra),
-        'geometry'   => $hit['geojson'],
+        'geometry'   => $cddaFeat['geometry'],
     ];
 }
 
 /**
- * Simplify a missed name: drop "(...)" notes and descriptor words (NOISE_WORDS),
+ * Simplify a missed name: drop "(…)" notes and descriptor words (NOISE_WORDS),
  * keeping the place name + type noun. e.g.
  *   "Rūdninkų krastovaizdžio draustinis"          -> "Rūdninkų draustinis"
  *   "Minijos senslėnio kraštovaizdžio draustinis" -> "Minijos draustinis"
  */
 function simplify_name(string $name): string
 {
-    $noise = array_flip(NOISE_WORDS);
-    $s     = preg_replace('/\([^)]*\)/u', ' ', $name);       // strip parentheticals
+    $noise  = array_flip(NOISE_WORDS);
+    $s      = preg_replace('/\([^)]*\)/u', ' ', $name);       // strip parentheticals
     $tokens = preg_split('/\s+/u', trim((string) $s)) ?: [];
 
     $keep = [];
@@ -150,7 +186,7 @@ function simplify_name(string $name): string
         if ($t === '') {
             continue;
         }
-        if (isset($noise[strtolower($t)])) {                 // descriptor word -> drop
+        if (isset($noise[strtolower($t)])) {                   // descriptor word -> drop
             continue;
         }
         $keep[] = $t;
@@ -175,10 +211,10 @@ function flush_state(string $outFile, string $missFile, array $features, array $
 }
 
 // =========================================================================
-//  RETRY-MISSES PASS — re-query only current misses with simplified names
+//  RETRY-MISSES PASS — re-query only current misses via CDDA
 // =========================================================================
 if ($retryMisses) {
-    // existing hits, keyed by code
+    // Load existing hits keyed by code
     $features = [];
     if (is_file($outFile)) {
         $prev = json_decode((string) file_get_contents($outFile), true);
@@ -190,13 +226,13 @@ if ($retryMisses) {
         }
     }
 
-    // name lookup by code
+    // Name lookup by code
     $nameOf = [];
     foreach ($rows as $o) {
         $nameOf[lyff_code_of((int) $o['nr'])] = (string) $o['name'];
     }
 
-    // miss set (still-missing codes)
+    // Miss set (still-missing codes)
     $missSet = [];
     if (is_file($missFile)) {
         foreach (preg_split('/\R/', (string) file_get_contents($missFile)) ?: [] as $line) {
@@ -211,43 +247,67 @@ if ($retryMisses) {
         exit(0);
     }
 
-    fwrite(STDERR, sprintf("Retrying %d misses with simplified names.\n", count($missSet)));
+    fwrite(STDERR, sprintf("Retrying %d misses via CDDA.\n", count($missSet)));
     $found = 0;
     $tried = 0;
+
     foreach (array_keys($missSet) as $code) {
         $orig = $nameOf[$code] ?? null;
         if ($orig === null) {
             continue; // unknown code, leave in misses
         }
-        $simpl = simplify_name($orig);
-        // nothing gained if the simplification is empty or unchanged
-        if ($simpl === '' || strcasecmp($simpl, $orig) === 0) {
-            fwrite(STDOUT, sprintf("skip   %s  (no simpler form)  %s\n", $code, $orig));
-            continue;
-        }
 
         $tried++;
-        $hit = nominatim_polygon($simpl, $ctx);
-        if ($hit !== null) {
+        $feat       = null;
+        $matchedVia = null;
+
+        // 1. Exact match with original full name
+        $feat = cdda_polygon($orig, $ctx);
+        if ($feat !== null) {
+            $matchedVia = 'exact';
+        }
+
+        // 2. Exact match with simplified name
+        if ($feat === null) {
+            $simpl = simplify_name($orig);
+            if ($simpl !== '' && strcasecmp($simpl, $orig) !== 0) {
+                $feat = cdda_polygon($simpl, $ctx);
+                if ($feat !== null) {
+                    $matchedVia = 'simplified-exact';
+                }
+            }
+        }
+
+        // 3. LIKE (fuzzy) match with simplified name — only if unambiguous (exactly 1 result)
+        if ($feat === null) {
+            $simpl = simplify_name($orig);
+            if ($simpl !== '' && strcasecmp($simpl, $orig) !== 0) {
+                $feat = cdda_polygon($simpl, $ctx, true);
+                if ($feat !== null) {
+                    $matchedVia = 'simplified-like';
+                }
+            }
+        }
+
+        if ($feat !== null) {
             $nr = (int) substr($code, strlen('LYFF-'));
-            $features[$code] = build_feature($code, $nr, $orig, $hit, [
-                'matched_via' => 'simplified',
-                'query'       => $simpl,
+            $features[$code] = build_feature($code, $nr, $orig, $feat, [
+                'matched_via' => $matchedVia,
             ]);
             unset($missSet[$code]);
             $found++;
-            fwrite(STDOUT, sprintf("found  %s  %-14s '%s'\n", $code, $hit['geojson']['type'] ?? '?', $simpl));
+            $cddaSiteName = $feat['properties']['siteName'] ?? '?';
+            fwrite(STDOUT, sprintf("found  %s  [%s]  cdda='%s'\n", $code, $matchedVia, $cddaSiteName));
         } else {
-            fwrite(STDOUT, sprintf("miss   %s  '%s'\n", $code, $simpl));
+            fwrite(STDOUT, sprintf("miss   %s  '%s'\n", $code, $orig));
         }
 
         flush_state($outFile, $missFile, $features, array_keys($missSet));
-        sleep(RATE_SLEEP);
     }
 
     flush_state($outFile, $missFile, $features, array_keys($missSet));
     fwrite(STDERR, sprintf(
-        "Done (retry). %d simplified queries, %d newly found, %d still missing.\n",
+        "Done (retry). %d tried, %d newly found, %d still missing.\n",
         $tried, $found, count($missSet)
     ));
     exit(0);
@@ -257,8 +317,8 @@ if ($retryMisses) {
 //  INITIAL PASS — query each object by its full name
 // =========================================================================
 
-// resume: load already-attempted features (unless --force)
-$features = [];   // code => Feature
+// Resume: load already-attempted features (unless --force)
+$features = [];   // code => Feature|null
 if (!$force && is_file($outFile)) {
     $prev = json_decode((string) file_get_contents($outFile), true);
     foreach ($prev['features'] ?? [] as $f) {
@@ -286,11 +346,12 @@ foreach ($rows as $o) {
     }
     $fetched++;
 
-    $hit = nominatim_polygon($name, $ctx);
-    if ($hit !== null) {
-        $features[$code] = build_feature($code, $nr, $name, $hit);
+    $feat = cdda_polygon($name, $ctx);
+    if ($feat !== null) {
+        $features[$code] = build_feature($code, $nr, $name, $feat);
         $hits++;
-        fwrite(STDOUT, sprintf("ok    %s  %-14s %s\n", $code, $hit['geojson']['type'] ?? '?', $name));
+        $cddaSiteName = $feat['properties']['siteName'] ?? '?';
+        fwrite(STDOUT, sprintf("ok    %s  cdda='%s'\n", $code, $cddaSiteName));
     } else {
         $features[$code] = null; // record the gap (so resume doesn't retry it)
         $missed++;
@@ -301,7 +362,6 @@ foreach ($rows as $o) {
         return $f === null;
     }));
     flush_state($outFile, $missFile, $features, $missCodes);
-    sleep(RATE_SLEEP);
 }
 
 $missCodes = array_keys(array_filter($features, static function ($f) {
