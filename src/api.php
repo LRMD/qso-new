@@ -86,7 +86,7 @@ function mode_features(mysqli $db, string $mode, string $dataDir): array
     switch ($mode) {
         case 'wal':  return wal_features($db);
         case 'lhfa': return lhfa_features($db);
-        case 'lyff': return lyff_features($dataDir . '/lyff.geojson');
+        case 'lyff': return lyff_features($dataDir . '/lyff.min.geojson');
     }
     return [];
 }
