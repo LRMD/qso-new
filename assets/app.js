@@ -260,7 +260,7 @@
       function searchInMode(m) { loadMode(m, { keepSearch: true }).then(function () { if (search.input) doSearch(false, search.input); }); }
 
       function fetchAdvancedSearch() {
-        var q = advancedSearch.input.trim();
+        var q = advancedSearch.input.trim().replace(/^([a-zA-Z]{2})(\d{2,3})$/, '$1-$2');
         if (searchTimer) clearTimeout(searchTimer);
         if (q.length < 2) {
           advancedSearch.open = false;
