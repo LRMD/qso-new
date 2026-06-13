@@ -17,7 +17,7 @@ require __DIR__ . '/src/view.php';
 
 // Bump on every deploy that changes API/geometry output — it is part of the cache
 // key, so old cached responses are invalidated even if no new QSO has arrived.
-const APP_BUILD = 'geo-locate-17';
+const APP_BUILD = 'geo-locate-19';
 
 // Built-in server (php -S): serve real static files directly (Apache does this
 // via .htaccess in production). No-op under php-fpm/mod_php.
@@ -45,6 +45,36 @@ if ($segments[0] === 'api') {
                 static fn() => json_encode_api(api_meta_last_update($db))));
         }
         fail(404, 'Unknown resource');
+    }
+
+    // /api/search?q=&limit=  (advanced autocomplete foundation)
+    if (($segments[1] ?? null) === 'search') {
+        if (isset($segments[2])) {
+            fail(404, 'Unknown resource');
+        }
+        $query = trim((string) ($_GET['q'] ?? ''));
+        if ($query === '') {
+            fail(400, 'Missing q');
+        }
+        if (strlen($query) > 64) {
+            fail(400, 'Invalid q');
+        }
+        $normalizedQuery = strtoupper($query);
+        if (strlen($normalizedQuery) < 2) {
+            fail(400, 'Invalid q');
+        }
+
+        $limit = 8;
+        if (isset($_GET['limit'])) {
+            $parsedLimit = filter_var($_GET['limit'], FILTER_VALIDATE_INT);
+            if ($parsedLimit === false) {
+                fail(400, 'Invalid limit');
+            }
+            $limit = max(1, min(20, $parsedLimit));
+        }
+
+        send_json(cached($cached, 'search?q=' . $normalizedQuery . '&l=' . $limit, $version,
+            static fn() => json_encode_api(api_search($db, $query, $limit))));
     }
 
     // /api/nearest?lat=&lng=  (nearest LHFA + LYFF object)

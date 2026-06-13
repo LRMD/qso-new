@@ -107,6 +107,133 @@ function feature_key(string $mode, array $feature): ?string
     return null;
 }
 
+function search_empty_groups(): array
+{
+    return ['callsigns' => [], 'wal' => [], 'lhfa' => [], 'lyff' => []];
+}
+
+function search_rank(string $query, string $code, string $name): ?int
+{
+    $q = strtoupper($query);
+    $c = strtoupper($code);
+    $n = strtoupper($name);
+
+    if ($c === $q) {
+        return 0;
+    }
+    if (strpos($c, $q) === 0) {
+        return 1;
+    }
+    if (strpos($c, $q) !== false) {
+        return 2;
+    }
+    if (strpos($n, $q) === 0) {
+        return 3;
+    }
+    if (strpos($n, $q) !== false) {
+        return 4;
+    }
+    return null;
+}
+
+function search_ranked_objects(array $rows, string $mode, string $query, int $limit): array
+{
+    $ranked = [];
+    foreach ($rows as $row) {
+        $code = format_code($mode, (string) $row['k1'], (int) $row['k2']);
+        $name = (string) $row['name'];
+        $rank = search_rank($query, $code, $name);
+        if ($rank === null) {
+            continue;
+        }
+        $ranked[] = [
+            'rank' => $rank,
+            'sort' => $code,
+            'item' => [
+                'type' => 'object',
+                'mode' => $mode,
+                'code' => $code,
+                'label' => $code,
+                'subtitle' => $name,
+            ],
+        ];
+    }
+
+    usort($ranked, static function (array $a, array $b): int {
+        if ($a['rank'] !== $b['rank']) {
+            return $a['rank'] <=> $b['rank'];
+        }
+        return strcmp($a['sort'], $b['sort']);
+    });
+
+    return array_map(static fn(array $r): array => $r['item'], array_slice($ranked, 0, $limit));
+}
+
+function api_search(mysqli $db, string $query, int $limit): array
+{
+    $groups = search_empty_groups();
+    $q = strtoupper(trim($query));
+
+    // Callsigns: grouped by normalized activator, prefix matches first, then contains.
+    $like = '%' . $q . '%';
+    $prefix = $q . '%';
+    $sql = "SELECT caller_simple AS callsign,
+                   COUNT(DISTINCT CASE WHEN wal1 <> '' THEN CONCAT('wal:', wal1, '-', wal2) END)
+                 + COUNT(DISTINCT CASE WHEN lhfa1 <> '' THEN CONCAT('lhfa:', lhfa1, '-', lhfa2) END)
+                 + COUNT(DISTINCT CASE WHEN lyff1 <> '' THEN CONCAT('lyff:', lyff1, '-', lyff2) END) AS objects,
+                   MAX(datetime) AS last_at
+            FROM qso
+            WHERE caller_simple <> '' AND caller_simple LIKE ?
+            GROUP BY caller_simple
+            ORDER BY CASE
+                       WHEN caller_simple = ? THEN 0
+                       WHEN caller_simple LIKE ? THEN 1
+                       ELSE 2
+                     END,
+                     last_at DESC,
+                     caller_simple ASC
+            LIMIT ?";
+    if ($stmt = mysqli_prepare($db, $sql)) {
+        mysqli_stmt_bind_param($stmt, 'sssi', $like, $q, $prefix, $limit);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $groups['callsigns'][] = [
+                'type' => 'callsign',
+                'label' => (string) $row['callsign'],
+                'value' => (string) $row['callsign'],
+                'subtitle' => (int) $row['objects'] . ' objects activated',
+            ];
+        }
+    }
+
+    $rows = [];
+    if ($res = mysqli_query($db, 'SELECT `row` AS k1, `column` AS k2, `name` FROM `wal`')) {
+        while ($row = mysqli_fetch_assoc($res)) {
+            $rows[] = $row;
+        }
+    }
+    $groups['wal'] = search_ranked_objects($rows, 'wal', $q, $limit);
+
+    $rows = [];
+    if ($res = mysqli_query($db, 'SELECT `state` AS k1, `nr` AS k2, `name` FROM `lhfa`')) {
+        while ($row = mysqli_fetch_assoc($res)) {
+            $rows[] = $row;
+        }
+    }
+    $groups['lhfa'] = search_ranked_objects($rows, 'lhfa', $q, $limit);
+
+    $rows = [];
+    if ($res = mysqli_query($db, "SELECT 'LYFF' AS k1, `nr` AS k2, `name` FROM `lyff`")) {
+        while ($row = mysqli_fetch_assoc($res)) {
+            $rows[] = $row;
+        }
+    }
+    $groups['lyff'] = search_ranked_objects($rows, 'lyff', $q, $limit);
+
+    return ['query' => $query, 'limit' => $limit, 'groups' => $groups];
+}
+
 // --- 3.1  /api/{mode}/objects --------------------------------------------
 
 function api_objects(mysqli $db, array $prog, string $mode, string $dataDir): array

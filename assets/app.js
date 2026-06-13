@@ -48,7 +48,8 @@
   var I18N = {
     lt: {
       title: 'Programos:', squares: 'skverai', hillforts: 'piliakalniai',
-      parks: 'parkai, rezervatai', searchPh: 'Ieškoti aktyvatoriaus šaukinio…', search: 'Ieškoti',
+      parks: 'parkai, rezervatai', searchPh: 'Ieškoti šaukinio, ID ar objekto…', search: 'Ieškoti',
+      searchUnavailable: 'Paieška nepasiekiama', callsigns: 'Šaukiniai',
       stats: 'Statistika', activators: 'aktyvatoriai', objects: 'objektai', coverage: 'Aktyvuota objektų',
       qsos: 'ryšiai (QSO)', hunters: 'medžiotojai', recent: 'Naujausi aktyvavimai', loadMore: 'Daugiau',
       breakdown: 'Pagal modą / diapazoną', byMode: 'Modos', byBand: 'Diapazonai', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
@@ -62,7 +63,8 @@
     },
     en: {
       title: 'Amateur radio programmes', squares: 'squares', hillforts: 'hillforts',
-      parks: 'parks, reserves', searchPh: 'Search activator callsign…', search: 'Search',
+      parks: 'parks, reserves', searchPh: 'Search callsign, ID, or object…', search: 'Search',
+      searchUnavailable: 'Search unavailable', callsigns: 'Callsigns',
       stats: 'Statistics', activators: 'activators', objects: 'objects', coverage: 'Objects activated:',
       qsos: 'QSOs', hunters: 'hunters', recent: 'Recent activations', loadMore: 'Load more',
       breakdown: 'By mode / band', byMode: 'Modes', byBand: 'Bands', phone: 'PHONE', cw: 'CW', digi: 'DIGI',
@@ -149,6 +151,16 @@
       var recent = reactive({ items: [], limit: 10, loading: false });
       var selected = ref(null);
       var search = reactive({ input: '', result: null, active: false });
+      var advancedSearch = reactive({
+        input: '',
+        open: false,
+        loading: false,
+        activeIndex: -1,
+        groups: { callsigns: [], wal: [], lhfa: [], lyff: [] },
+        error: false
+      });
+      var searchBox = ref(null);
+      var searchTimer = null, searchSeq = 0;
       var lastUpdate = ref('');
       var mobileStats = ref(false);             // collapsed stats strip expanded? (mobile)
       var geo = reactive({ open: false, loading: false, maiden: '', wal: null, lhfa: null, lyff: null });
@@ -203,7 +215,7 @@
         loadStats(); loadRecent();
         return loadObjects().then(function () {
           if (opts.code) selectObject(opts.code, { noPush: true, fit: true });
-          else if (opts.op) { search.input = opts.op; doSearch(true); }
+          else if (opts.op) { setAdvancedInput(opts.op); doSearch(true, opts.op); }
         });
       }
 
@@ -219,9 +231,19 @@
       }
       function closeDetail() { selected.value = null; updateHighlight(); pushUrl(); }
 
-      function doSearch(noPush) {
-        var call = (search.input || '').trim();
+      function resetAdvancedGroups() {
+        advancedSearch.groups = { callsigns: [], wal: [], lhfa: [], lyff: [] };
+        advancedSearch.activeIndex = -1;
+      }
+      function setAdvancedInput(value) {
+        advancedSearch.input = value || '';
+        search.input = advancedSearch.input;
+      }
+      function doSearch(noPush, callOverride) {
+        var call = (callOverride || search.input || advancedSearch.input || '').trim();
         if (!call) { clearSearch(); return; }
+        search.input = call;
+        advancedSearch.input = call;
         api(mode.value + '/activator/' + encodeURIComponent(call)).then(function (d) {
           search.result = d; search.active = true;
           highlightCodes.value = (d.objects || []).map(function (o) { return o.code; });
@@ -231,12 +253,98 @@
       }
       function clearSearch() {
         search.input = ''; search.result = null; search.active = false;
+        advancedSearch.input = ''; advancedSearch.open = false; advancedSearch.error = false;
+        resetAdvancedGroups();
         highlightCodes.value = []; updateHighlight(); pushUrl();
       }
-      function searchInMode(m) { loadMode(m, { keepSearch: true }).then(function () { if (search.input) doSearch(); }); }
+      function searchInMode(m) { loadMode(m, { keepSearch: true }).then(function () { if (search.input) doSearch(false, search.input); }); }
+
+      function fetchAdvancedSearch() {
+        var q = advancedSearch.input.trim();
+        if (searchTimer) clearTimeout(searchTimer);
+        if (q.length < 2) {
+          advancedSearch.open = false;
+          advancedSearch.loading = false;
+          advancedSearch.error = false;
+          resetAdvancedGroups();
+          return;
+        }
+        advancedSearch.open = true;
+        advancedSearch.loading = true;
+        advancedSearch.error = false;
+        var seq = ++searchSeq;
+        searchTimer = setTimeout(function () {
+          api('search?q=' + encodeURIComponent(q) + '&limit=8').then(function (d) {
+            if (seq !== searchSeq) return;
+            advancedSearch.groups = (d && d.groups) || { callsigns: [], wal: [], lhfa: [], lyff: [] };
+            advancedSearch.loading = false;
+            advancedSearch.activeIndex = -1;
+          }).catch(function () {
+            if (seq !== searchSeq) return;
+            advancedSearch.loading = false;
+            advancedSearch.error = true;
+            resetAdvancedGroups();
+          });
+        }, 180);
+      }
+      function onAdvancedInput() {
+        search.input = advancedSearch.input;
+        fetchAdvancedSearch();
+      }
+      function onAdvancedFocus() {
+        if (advancedSearch.input.trim().length >= 2) {
+          advancedSearch.open = true;
+          fetchAdvancedSearch();
+        }
+      }
+      function closeAdvancedSearch() {
+        advancedSearch.open = false;
+        advancedSearch.activeIndex = -1;
+      }
+      function selectSearchResult(item) {
+        if (!item) return;
+        closeAdvancedSearch();
+        if (item.type === 'callsign') {
+          selected.value = null;
+          setAdvancedInput(item.value || item.label);
+          doSearch(false, item.value || item.label);
+          return;
+        }
+        if (item.type === 'object' && item.mode && item.code) {
+          setAdvancedInput(item.code);
+          search.result = null; search.active = false; highlightCodes.value = [];
+          loadMode(item.mode, { noPush: true }).then(function () { selectObject(item.code); });
+        }
+      }
+      function submitAdvancedSearch() {
+        var flat = searchFlatResults.value;
+        if (advancedSearch.activeIndex >= 0 && flat[advancedSearch.activeIndex]) {
+          selectSearchResult(flat[advancedSearch.activeIndex]);
+          return;
+        }
+        closeAdvancedSearch();
+        doSearch(false, advancedSearch.input);
+      }
+      function onAdvancedKeydown(e) {
+        var flat = searchFlatResults.value;
+        if (e.key === 'ArrowDown') {
+          if (!advancedSearch.open && advancedSearch.input.trim().length >= 2) advancedSearch.open = true;
+          if (flat.length) advancedSearch.activeIndex = Math.min(flat.length - 1, advancedSearch.activeIndex + 1);
+          e.preventDefault();
+        } else if (e.key === 'ArrowUp') {
+          if (flat.length) advancedSearch.activeIndex = Math.max(0, advancedSearch.activeIndex - 1);
+          e.preventDefault();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          submitAdvancedSearch();
+        } else if (e.key === 'Escape') {
+          closeAdvancedSearch();
+          e.preventDefault();
+        }
+      }
 
       // Run the activator search for a callsign (deep-links ?op=CALLSIGN).
-      function openActivator(call) { selected.value = null; search.input = call; doSearch(); }
+      function openActivator(call) { selected.value = null; setAdvancedInput(call); doSearch(false, call); }
       // Real hrefs so the anchors are openable in a new tab / share-able.
       function objHref(code) { return appBase + mode.value + '/' + encodeURIComponent(code); }
       function actHref(call) { return appBase + mode.value + '?op=' + encodeURIComponent(call); }
@@ -387,6 +495,9 @@
         });
         // Map box changes when the device rotates / the layout reflows — refit it.
         window.addEventListener('orientationchange', function () { setTimeout(function () { if (map) map.resize(); }, 300); });
+        document.addEventListener('mousedown', function (e) {
+          if (searchBox.value && !searchBox.value.contains(e.target)) closeAdvancedSearch();
+        });
       });
       loadLastUpdate();
 
@@ -415,16 +526,46 @@
         return bandParts.value.slice().sort(function (a, b) { return b.value - a.value; });
       });
       var bandTop3 = computed(function () { return bandSorted.value.slice(0, 3); });
+      var searchSections = computed(function () {
+        var labels = { callsigns: t('callsigns'), wal: 'WAL', lhfa: 'LHFA', lyff: 'LYFF' };
+        var idx = 0;
+        return ['callsigns', 'wal', 'lhfa', 'lyff'].map(function (key) {
+          var items = (advancedSearch.groups[key] || []).map(function (item) {
+            var copy = {};
+            Object.keys(item).forEach(function (k) { copy[k] = item[k]; });
+            copy._idx = idx++;
+            copy._id = 'search-opt-' + copy._idx;
+            return copy;
+          });
+          return { key: key, label: labels[key], items: items };
+        }).filter(function (section) { return section.items.length > 0; });
+      });
+      var searchFlatResults = computed(function () {
+        var out = [];
+        searchSections.value.forEach(function (section) {
+          section.items.forEach(function (item) { out.push(item); });
+        });
+        return out;
+      });
+      var hasSearchResults = computed(function () { return searchFlatResults.value.length > 0; });
+      var activeOptionId = computed(function () {
+        var item = searchFlatResults.value[advancedSearch.activeIndex];
+        return item ? item._id : null;
+      });
 
       return {
         MODES: MODES, mode: mode, lang: lang, t: t, modeName: function (m) { return modeName(t, m); },
-        stats: stats, recent: recent, selected: selected, search: search, lastUpdate: lastUpdate,
+        stats: stats, recent: recent, selected: selected, search: search, advancedSearch: advancedSearch,
+        searchBox: searchBox, searchSections: searchSections, hasSearchResults: hasSearchResults,
+        activeOptionId: activeOptionId, lastUpdate: lastUpdate,
         coveragePct: coveragePct, mobileStats: mobileStats,
         statTab: statTab, modeParts: modeParts, modeSlices: modeSlices,
         bandSlices: bandSlices, bandTop3: bandTop3, bandSorted: bandSorted,
         BASEMAPS: BASEMAPS, basemap: basemap, setBasemap: setBasemap,
         switchMode: function (m) { if (m !== mode.value) loadMode(m); },
-        setLang: setLang, doSearch: function () { doSearch(); }, clearSearch: clearSearch,
+        setLang: setLang, doSearch: function () { submitAdvancedSearch(); }, clearSearch: clearSearch,
+        onAdvancedInput: onAdvancedInput, onAdvancedFocus: onAdvancedFocus, onAdvancedKeydown: onAdvancedKeydown,
+        selectSearchResult: selectSearchResult,
         selectObject: function (c) { selectObject(c); }, closeDetail: closeDetail, searchInMode: searchInMode,
         openActivator: openActivator, objHref: objHref, actHref: actHref,
         geo: geo, gotoNearest: gotoNearest, objHrefMode: objHrefMode,
@@ -438,9 +579,23 @@
       '    <nav class="modes" :aria-label="t(\'title\')">',
       '      <button v-for="m in MODES" :key="m" type="button" :class="{active: m===mode}" :aria-current="m===mode ? \'page\' : null" @click="switchMode(m)">{{ m.toUpperCase() }}</button>',
       '    </nav>',
-      '    <form class="search" @submit.prevent="doSearch">',
-      '      <input v-model="search.input" :aria-label="t(\'searchPh\')" :placeholder="t(\'searchPh\')" autocomplete="off" spellcheck="false">',
+      '    <form class="search search-advanced" ref="searchBox" @submit.prevent="doSearch">',
+      '      <input v-model="advancedSearch.input" role="combobox" aria-autocomplete="list" aria-controls="search-results" :aria-expanded="advancedSearch.open ? \'true\' : \'false\'" :aria-activedescendant="activeOptionId" :aria-label="t(\'searchPh\')" :placeholder="t(\'searchPh\')" autocomplete="off" spellcheck="false" @input="onAdvancedInput" @focus="onAdvancedFocus" @keydown="onAdvancedKeydown">',
       '      <button type="submit">{{ t("search") }}</button>',
+      '      <div id="search-results" class="search-results" role="listbox" v-if="advancedSearch.open">',
+      '        <div class="spin" v-if="advancedSearch.loading">{{ t("loading") }}</div>',
+      '        <div class="empty" v-else-if="advancedSearch.error">{{ t("searchUnavailable") }}</div>',
+      '        <template v-else-if="hasSearchResults">',
+      '          <div class="search-section" v-for="section in searchSections" :key="section.key">',
+      '            <div class="search-section-title">{{ section.label }}</div>',
+      '            <button class="search-option" type="button" role="option" v-for="item in section.items" :key="item._id" :id="item._id" :aria-selected="item._idx===advancedSearch.activeIndex" :class="{active:item._idx===advancedSearch.activeIndex}" @mousedown.prevent="selectSearchResult(item)">',
+      '              <span class="search-option-main">{{ item.label }}</span>',
+      '              <span class="search-option-sub">{{ item.subtitle }}</span>',
+      '            </button>',
+      '          </div>',
+      '        </template>',
+      '        <div class="empty" v-else>{{ t("noResults") }}</div>',
+      '      </div>',
       '    </form>',
       '    <div class="spacer"></div>',
       '    <select class="basemap" title="Map" aria-label="Map" :value="basemap" @change="setBasemap($event.target.value)">',
