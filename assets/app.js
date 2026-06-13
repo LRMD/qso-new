@@ -377,9 +377,18 @@
         if (currentGeomKind === 'point') {
           // Plain circles (native clustering drops these features on real data).
           map.addSource('obj', { type: 'geojson', data: geojson });
+          var lhfaMultiplier = ['case',
+            ['>', ['to-number', ['get', 'activators']], 0],
+            ['min', 5, ['ceil', ['/', ['to-number', ['get', 'activators']], 2]]],
+            5
+          ];
           map.addLayer({ id: 'obj-pt', type: 'circle', source: 'obj',
             paint: { 'circle-color': RAG_COLOR,
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.5, 10, 6, 14, 9],
+              'circle-radius': ['interpolate', ['linear'], ['zoom'],
+                6, ['*', 2.5, lhfaMultiplier],
+                10, ['*', 6, lhfaMultiplier],
+                14, ['*', 9, lhfaMultiplier]
+              ],
               'circle-stroke-color': '#0b121a', 'circle-stroke-width': 0.6, 'circle-opacity': 0.9 } });
           map.addLayer({ id: 'obj-hl', type: 'circle', source: 'obj',
             filter: ['in', ['get', 'code'], ['literal', []]],
