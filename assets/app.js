@@ -62,7 +62,7 @@
       nearestHillfort: 'Artimiausias piliakalnis', nearestPark: 'Artimiausias parkas'
     },
     en: {
-      title: 'Amateur radio programmes', squares: 'squares', hillforts: 'hillforts',
+      title: 'LY programmes', squares: 'squares', hillforts: 'hillforts',
       parks: 'parks, reserves', searchPh: 'Search callsign, ID, or object…', search: 'Search',
       searchUnavailable: 'Search unavailable', callsigns: 'Callsigns',
       stats: 'Statistics', activators: 'activators', objects: 'objects', coverage: 'Objects activated:',
