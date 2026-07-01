@@ -174,24 +174,32 @@ function api_search(mysqli $db, string $query, int $limit): array
     $groups = search_empty_groups();
     $q = strtoupper(trim($query));
 
-    // Callsigns: grouped by normalized activator, prefix matches first, then contains.
+    // Callsigns: discover via caller_simple LIKE, then expand objects to include guest-op QSOs
+    // (operator_simple = callsign) so the count matches what api_activator returns.
+    // A single COUNT(DISTINCT namespaced_key) across all three programmes avoids double-counting
+    // a QSO that qualifies for multiple programmes simultaneously.
     $like = '%' . $q . '%';
     $prefix = $q . '%';
-    $sql = "SELECT caller_simple AS callsign,
-                   COUNT(DISTINCT CASE WHEN wal1 <> '' THEN CONCAT('wal:', wal1, '-', wal2) END)
-                 + COUNT(DISTINCT CASE WHEN lhfa1 <> '' THEN CONCAT('lhfa:', lhfa1, '-', lhfa2) END)
-                 + COUNT(DISTINCT CASE WHEN lyff1 <> '' THEN CONCAT('lyff:', lyff1, '-', lyff2) END) AS objects,
-                   MAX(datetime) AS last_at
-            FROM qso
-            WHERE caller_simple <> '' AND caller_simple LIKE ?
-            GROUP BY caller_simple
+    $sql = "SELECT base.callsign,
+                   COUNT(DISTINCT CASE WHEN q.wal1  <> '' THEN CONCAT('w:', q.wal1,  '-', q.wal2)  END)
+                 + COUNT(DISTINCT CASE WHEN q.lhfa1 <> '' THEN CONCAT('l:', q.lhfa1, '-', q.lhfa2) END)
+                 + COUNT(DISTINCT CASE WHEN q.lyff1 <> '' THEN CONCAT('f:', q.lyff2)                END) AS objects,
+                   MAX(q.datetime) AS last_at
+            FROM (
+                SELECT caller_simple AS callsign
+                FROM qso
+                WHERE caller_simple <> '' AND caller_simple LIKE ?
+                GROUP BY caller_simple
+            ) base
+            JOIN qso q ON q.caller_simple = base.callsign OR q.operator_simple = base.callsign
+            GROUP BY base.callsign
             ORDER BY CASE
-                       WHEN caller_simple = ? THEN 0
-                       WHEN caller_simple LIKE ? THEN 1
+                       WHEN base.callsign = ? THEN 0
+                       WHEN base.callsign LIKE ? THEN 1
                        ELSE 2
                      END,
                      last_at DESC,
-                     caller_simple ASC
+                     base.callsign ASC
             LIMIT ?";
     if ($stmt = mysqli_prepare($db, $sql)) {
         mysqli_stmt_bind_param($stmt, 'sssi', $like, $q, $prefix, $limit);
@@ -483,34 +491,43 @@ function api_activator(mysqli $db, array $prog, string $mode, string $input): ar
         return ['mode' => $mode, 'callsign' => normalize_call($input), 'count' => 0, 'objects' => []];
     }
 
+    // Include QSOs where the operator was a guest on another station callsign.
+    // We filter by operator_simple rather than expanding to station callsigns first,
+    // so we only attribute QSOs where $calls was the logged operator on that specific row —
+    // not all QSOs by every station that $calls ever happened to operate.
     $placeholders = implode(',', array_fill(0, count($calls), '?'));
     $types        = str_repeat('s', count($calls));
     $sql = "SELECT `$c1` AS k1, `$c2` AS k2, COUNT(*) AS qsos,
                    MIN(datetime) AS first_at, MAX(datetime) AS last_at,
                    GROUP_CONCAT(DISTINCT band ORDER BY band) AS bands,
-                   GROUP_CONCAT(DISTINCT mode ORDER BY mode) AS modes
+                   GROUP_CONCAT(DISTINCT mode ORDER BY mode) AS modes,
+                   GROUP_CONCAT(DISTINCT caller_simple ORDER BY caller_simple) AS stations
             FROM qso
-            WHERE `$c1` <> '' AND caller_simple IN ($placeholders)
+            WHERE `$c1` <> '' AND (caller_simple IN ($placeholders) OR operator_simple IN ($placeholders))
             GROUP BY `$c1`, `$c2`
             ORDER BY last_at DESC";
 
+    // $calls is used twice in the IN clauses (caller_simple + operator_simple).
+    $doubleParams = array_merge($calls, $calls);
+    $doubleTypes  = str_repeat('s', count($doubleParams));
     $objects = [];
     if ($stmt = mysqli_prepare($db, $sql)) {
         $refs = [];
-        foreach ($calls as $k => $v) {
-            $refs[$k] = &$calls[$k];               // bind_param needs references
+        foreach ($doubleParams as $k => $v) {
+            $refs[$k] = &$doubleParams[$k];
         }
-        mysqli_stmt_bind_param($stmt, $types, ...$refs);
+        mysqli_stmt_bind_param($stmt, $doubleTypes, ...$refs);
         mysqli_stmt_execute($stmt);
         $res = mysqli_stmt_get_result($stmt);
         while ($res && ($row = mysqli_fetch_assoc($res))) {
             $objects[] = [
-                'code'  => format_code($mode, (string) $row['k1'], (int) $row['k2']),
-                'qsos'  => (int) $row['qsos'],
-                'first' => $row['first_at'],
-                'last'  => $row['last_at'],
-                'bands' => split_list($row['bands']),
-                'modes' => split_list($row['modes']),
+                'code'     => format_code($mode, (string) $row['k1'], (int) $row['k2']),
+                'qsos'     => (int) $row['qsos'],
+                'first'    => $row['first_at'],
+                'last'     => $row['last_at'],
+                'bands'    => split_list($row['bands']),
+                'modes'    => split_list($row['modes']),
+                'stations' => split_list($row['stations']),
             ];
         }
     }
