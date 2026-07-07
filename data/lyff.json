@@ -328,7 +328,28 @@
 {"id":"324","type":"LYFF","nr":"323","name":"Palšinės telmologinis draustinis (dalis LYFF-0012)"},
 {"id":"325","type":"LYFF","nr":"324","name":"Tetervinio telmologinis draustinis (dalis LYFF-0012)"},
 {"id":"326","type":"LYFF","nr":"325","name":"Pūsčios telmologinis draustinis (dalis LYFF-0012)"},
-{"id":"327","type":"LYFF","nr":"326","name":"Ganiavos telmologinis draustinis (dalis LYFF-0012)"}
+{"id":"327","type":"LYFF","nr":"326","name":"Ganiavos telmologinis draustinis (dalis LYFF-0012)"},
+{"id":"328","type":"LYFF","nr":"327","name":"Panerių erozinio kalvyno kraštovaizdžio draustinis"},
+{"id":"329","type":"LYFF","nr":"328","name":"Vokės senslėnio šlaitų geomorfologinis draustinis"},
+{"id":"330","type":"LYFF","nr":"329","name":"Tapelių kraštovaizdžio draustinis"},
+{"id":"331","type":"LYFF","nr":"330","name":"Veržuvos hidrografinis draustinis"},
+{"id":"332","type":"LYFF","nr":"331","name":"Jūžinto kraštovaizdžio draustinis"},
+{"id":"333","type":"LYFF","nr":"332","name":"Kregžlės kraštovaizdžio draustinis"},
+{"id":"334","type":"LYFF","nr":"333","name":"Antazavės šilo kraštovaizdžio draustinis"},
+{"id":"335","type":"LYFF","nr":"334","name":"Dusetų urbanistinis draustinis"},
+{"id":"336","type":"LYFF","nr":"335","name":"Ilgašilio botaninis-zoologinis draustinis"},
+{"id":"337","type":"LYFF","nr":"336","name":"Kalviškių kraštovaizdžio draustinis"},
+{"id":"338","type":"LYFF","nr":"337","name":"Rašų hidrografinis draustinis"},
+{"id":"339","type":"LYFF","nr":"338","name":"Salinio hidrografinis draustinis"},
+{"id":"340","type":"LYFF","nr":"339","name":"Sartų hidrografinis draustinis"},
+{"id":"341","type":"LYFF","nr":"340","name":"Zaduojo kraštovaizdžio draustinis"},
+{"id":"342","type":"LYFF","nr":"341","name":"Ceikinių botaninis draustinis"},
+{"id":"343","type":"LYFF","nr":"342","name":"Didžiasalio etnokultūrinis draustinis"},
+{"id":"344","type":"LYFF","nr":"343","name":"Ilgio hidrografinis draustinis"},
+{"id":"345","type":"LYFF","nr":"345","name":"Saločio telmologinis draustinis"},
+{"id":"346","type":"LYFF","nr":"346","name":"Sirvėtos kraštovaizdžio draustinis"},
+{"id":"347","type":"LYFF","nr":"347","name":"Čiūlėnų geomorfologinis draustinis"},
+{"id":"348","type":"LYFF","nr":"344","name":"Neversčių botaninis draustinis"}
 ]
 }
 ]
